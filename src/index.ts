@@ -1,4 +1,4 @@
-import { starterPlugin } from './plugin.ts';
+import { aimoRouterPlugin } from './plugin.ts';
 
-export { starterPlugin, StarterService } from './plugin.ts';
-export default starterPlugin;
+export { aimoRouterPlugin } from './plugin.ts';
+export default aimoRouterPlugin;

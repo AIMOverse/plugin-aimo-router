@@ -1,265 +1,177 @@
-import type { Plugin } from '@elizaos/core';
 import {
-  type Action,
-  type ActionResult,
-  type GenerateTextParams,
-  type HandlerCallback,
-  type IAgentRuntime,
-  type Memory,
   ModelType,
-  type Provider,
-  type ProviderResult,
-  type RouteRequest,
-  type RouteResponse,
-  Service,
-  type State,
   logger,
-  type MessagePayload,
-  type WorldPayload,
-  EventType,
+  type Plugin,
+  type IAgentRuntime,
+  type GenerateTextParams,
+  type ObjectGenerationParams,
+  type ImageDescriptionParams,
+  type ImageGenerationParams,
+  type TextEmbeddingParams,
 } from '@elizaos/core';
-import { z } from 'zod';
+import { initializeAimoRouter } from './init';
+import { handleTextSmall, handleTextLarge } from './models/text';
+import { handleObjectSmall, handleObjectLarge } from './models/object';
+import { handleImageDescription, handleImageGeneration } from './models/image';
+import { handleTextEmbedding } from './models/embedding';
 
 /**
- * Defines the configuration schema for a plugin, including the validation rules for the plugin name.
- *
- * @type {import('zod').ZodObject<{ EXAMPLE_PLUGIN_VARIABLE: import('zod').ZodString }>}
+ * Defines the AiMo Router plugin with its name, description, and configuration options.
+ * 
+ * AiMo Router plugin provides access to AiMo Network's decentralized AI inference marketplace.
+ * 
+ * Supported models:
+ * - TEXT_SMALL: Text generation with smaller models
+ * - TEXT_LARGE: Text generation with larger models
+ * - OBJECT_SMALL: Structured object generation with smaller models
+ * - OBJECT_LARGE: Structured object generation with larger models
+ * 
+ * Not yet supported (planned for future releases):
+ * - TEXT_EMBEDDING: Text embeddings (when AiMo Network supports them)
+ * - IMAGE_DESCRIPTION: Image analysis (when AiMo Network supports vision models)
+ * - IMAGE: Image generation (when AiMo Network supports image models)
+ * 
+ * @type {Plugin}
  */
-const configSchema = z.object({
-  EXAMPLE_PLUGIN_VARIABLE: z
-    .string()
-    .min(1, 'Example plugin variable is not provided')
-    .optional()
-    .transform((val) => {
-      if (!val) {
-        logger.warn('Example plugin variable is not provided (this is expected)');
-      }
-      return val;
-    }),
-});
-
-/**
- * Example HelloWorld action
- * This demonstrates the simplest possible action structure
- */
-/**
- * Action representing a hello world message.
- * @typedef {Object} Action
- * @property {string} name - The name of the action.
- * @property {string[]} similes - An array of related actions.
- * @property {string} description - A brief description of the action.
- * @property {Function} validate - Asynchronous function to validate the action.
- * @property {Function} handler - Asynchronous function to handle the action and generate a response.
- * @property {Object[]} examples - An array of example inputs and expected outputs for the action.
- */
-const quickAction: Action = {
-  name: 'QUICK_ACTION',
-  similes: ['GREET', 'SAY_HELLO', 'HELLO_WORLD'],
-  description: 'Responds with a simple hello world message',
-
-  validate: async (
-    _runtime: IAgentRuntime,
-    _message: Memory,
-    _state: State | undefined
-  ): Promise<boolean> => {
-    // Always valid
-    return true;
-  },
-
-  handler: async (
-    _runtime: IAgentRuntime,
-    message: Memory,
-    _state: State | undefined,
-    _options: Record<string, unknown> = {},
-    callback?: HandlerCallback,
-    _responses?: Memory[]
-  ): Promise<ActionResult> => {
-    try {
-      const response = 'Hello world!';
-
-      if (callback) {
-        await callback({
-          text: response,
-          actions: ['QUICK_ACTION'],
-          source: message.content.source,
-        });
-      }
-
-      return {
-        text: response,
-        success: true,
-        data: {
-          actions: ['QUICK_ACTION'],
-          source: message.content.source,
-        },
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error : new Error(String(error)),
-      };
-    }
-  },
-
-  examples: [
-    [
-      {
-        name: '{{name1}}',
-        content: {
-          text: 'Can you say hello?',
-        },
-      },
-      {
-        name: '{{name2}}',
-        content: {
-          text: 'hello world!',
-          actions: ['QUICK_ACTION'],
-        },
-      },
-    ],
-  ],
-};
-
-/**
- * Example Hello World Provider
- * This demonstrates the simplest possible provider implementation
- */
-const quickProvider: Provider = {
-  name: 'QUICK_PROVIDER',
-  description: 'A simple example provider',
-
-  get: async (
-    _runtime: IAgentRuntime,
-    _message: Memory,
-    _state: State | undefined
-  ): Promise<ProviderResult> => {
-    return {
-      text: 'I am a provider',
-      values: {},
-      data: {},
-    };
-  },
-};
-
-export class StarterService extends Service {
-  static override serviceType = 'starter';
-
-  override capabilityDescription =
-    'This is a starter service which is attached to the agent through the starter plugin.';
-
-  constructor(runtime: IAgentRuntime) {
-    super(runtime);
-  }
-
-  static override async start(runtime: IAgentRuntime): Promise<Service> {
-    logger.info('Starting starter service');
-    const service = new StarterService(runtime);
-    return service;
-  }
-
-  static override async stop(runtime: IAgentRuntime): Promise<void> {
-    logger.info('Stopping starter service');
-    const service = runtime.getService(StarterService.serviceType);
-    if (!service) {
-      throw new Error('Starter service not found');
-    }
-    if ('stop' in service && typeof service.stop === 'function') {
-      await service.stop();
-    }
-  }
-
-  override async stop(): Promise<void> {
-    logger.info('Starter service stopped');
-  }
-}
-
-export const starterPlugin: Plugin = {
-  name: 'plugin-aimo-router',
-  description: 'Quick backend-only plugin template for elizaOS',
+export const aimoRouterPlugin: Plugin = {
+  name: 'aimo-router',
+  description: 'AiMo Network plugin - decentralized AI inference marketplace using SVM/EVM wallet signing',
   config: {
-    EXAMPLE_PLUGIN_VARIABLE: process.env.EXAMPLE_PLUGIN_VARIABLE,
+    AIMO_WALLET_TYPE: process.env.AIMO_WALLET_TYPE,
+    AIMO_PRIVATE_KEY: process.env.AIMO_PRIVATE_KEY,
+    AIMO_CHAIN_ID: process.env.AIMO_CHAIN_ID,
+    AIMO_BASE_URL: process.env.AIMO_BASE_URL,
+    AIMO_SMALL_MODEL: process.env.AIMO_SMALL_MODEL,
+    AIMO_LARGE_MODEL: process.env.AIMO_LARGE_MODEL,
+    SMALL_MODEL: process.env.SMALL_MODEL,
+    LARGE_MODEL: process.env.LARGE_MODEL,
   },
-  async init(config: Record<string, string>) {
-    logger.info('Initializing plugin-aimo-router');
-    try {
-      const validatedConfig = await configSchema.parseAsync(config);
-
-      // Set all environment variables at once
-      for (const [key, value] of Object.entries(validatedConfig)) {
-        if (value) process.env[key] = value;
-      }
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        const errorMessages =
-          error.issues?.map((e) => e.message)?.join(', ') || 'Unknown validation error';
-        throw new Error(`Invalid plugin configuration: ${errorMessages}`);
-      }
-      throw new Error(
-        `Invalid plugin configuration: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+  async init(config, runtime) {
+    // Initialize AiMo Router configuration (validation runs in background)
+    initializeAimoRouter(config, runtime);
   },
   models: {
-    [ModelType.TEXT_SMALL]: async (_runtime: IAgentRuntime, params: unknown) => {
-      const { prompt, stopSequences = [] } = params as GenerateTextParams;
-      return 'Never gonna give you up, never gonna let you down, never gonna run around and desert you...';
+    [ModelType.TEXT_SMALL]: async (
+      runtime: IAgentRuntime,
+      params: GenerateTextParams
+    ) => {
+      return handleTextSmall(runtime, params);
     },
-    [ModelType.TEXT_LARGE]: async (_runtime: IAgentRuntime, params: unknown) => {
-      const {
-        prompt,
-        stopSequences = [],
-        maxTokens = 8192,
-        temperature = 0.7,
-        frequencyPenalty = 0.7,
-        presencePenalty = 0.7,
-      } = params as GenerateTextParams;
-      return 'Never gonna make you cry, never gonna say goodbye, never gonna tell a lie and hurt you...';
+    [ModelType.TEXT_LARGE]: async (
+      runtime: IAgentRuntime,
+      params: GenerateTextParams
+    ) => {
+      return handleTextLarge(runtime, params);
+    },
+    [ModelType.OBJECT_SMALL]: async (runtime: IAgentRuntime, params: ObjectGenerationParams) => {
+      return handleObjectSmall(runtime, params);
+    },
+    [ModelType.OBJECT_LARGE]: async (runtime: IAgentRuntime, params: ObjectGenerationParams) => {
+      return handleObjectLarge(runtime, params);
+    },
+    [ModelType.IMAGE_DESCRIPTION]: async (
+      runtime: IAgentRuntime,
+      params: ImageDescriptionParams | string
+    ) => {
+      return handleImageDescription(runtime, params);
+    },
+    [ModelType.IMAGE]: async (runtime: IAgentRuntime, params: ImageGenerationParams) => {
+      return handleImageGeneration(runtime, params);
+    },
+    [ModelType.TEXT_EMBEDDING]: async (
+      runtime: IAgentRuntime,
+      params: TextEmbeddingParams | string | null
+    ) => {
+      return handleTextEmbedding(runtime, params);
     },
   },
-  routes: [
+  tests: [
     {
-      name: 'api-status',
-      path: '/api/status',
-      type: 'GET',
-      handler: async (_req: RouteRequest, res: RouteResponse) => {
-        res.json({
-          status: 'ok',
-          plugin: 'quick-starter',
-          timestamp: new Date().toISOString(),
-        });
-      },
+      name: 'aimo_router_plugin_tests',
+      tests: [
+        {
+          name: 'aimo_test_text_small',
+          fn: async (runtime: IAgentRuntime) => {
+            try {
+              const text = await runtime.useModel(ModelType.TEXT_SMALL, {
+                prompt: 'What is AiMo Network?',
+              });
+              if (!text || text.length === 0) {
+                throw new Error('Failed to generate text');
+              }
+              logger.log({ text }, 'generated with test_text_small');
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              logger.error(`Error in test_text_small: ${message}`);
+              throw error;
+            }
+          },
+        },
+        {
+          name: 'aimo_test_text_large',
+          fn: async (runtime: IAgentRuntime) => {
+            try {
+              const text = await runtime.useModel(ModelType.TEXT_LARGE, {
+                prompt: 'Explain decentralized AI inference in 3 sentences.',
+              });
+              if (!text || text.length === 0) {
+                throw new Error('Failed to generate text');
+              }
+              logger.log({ text }, 'generated with test_text_large');
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              logger.error(`Error in test_text_large: ${message}`);
+              throw error;
+            }
+          },
+        },
+        {
+          name: 'aimo_test_streaming',
+          fn: async (runtime: IAgentRuntime) => {
+            try {
+              const chunks: string[] = [];
+              const result = await runtime.useModel(ModelType.TEXT_SMALL, {
+                prompt: 'Count from 1 to 5.',
+                onStreamChunk: (chunk: string) => {
+                  chunks.push(chunk);
+                },
+              });
+              if (!result || result.length === 0) {
+                throw new Error('Streaming returned empty result');
+              }
+              if (chunks.length === 0) {
+                throw new Error('No streaming chunks received');
+              }
+              logger.log({ chunks: chunks.length, result: result.substring(0, 50) }, 'Streaming test completed');
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              logger.error(`Error in aimo_test_streaming: ${message}`);
+              throw error;
+            }
+          },
+        },
+        {
+          name: 'aimo_test_object_small',
+          fn: async (runtime: IAgentRuntime) => {
+            try {
+              const result = await runtime.useModel(ModelType.OBJECT_SMALL, {
+                prompt: 'Create a JSON object with a message field saying hello',
+                schema: { type: 'object' },
+              });
+              logger.log({ result }, 'Generated object with test_object_small');
+              if (!result || (typeof result === 'object' && 'error' in result)) {
+                throw new Error('Failed to generate object');
+              }
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              logger.error(`Error in test_object_small: ${message}`);
+              throw error;
+            }
+          },
+        },
+      ],
     },
   ],
-  events: {
-    [EventType.MESSAGE_RECEIVED]: [
-      async (params: MessagePayload) => {
-        logger.debug('MESSAGE_RECEIVED event received');
-        logger.debug({ message: params.message }, 'Message:');
-      },
-    ],
-    [EventType.VOICE_MESSAGE_RECEIVED]: [
-      async (params: MessagePayload) => {
-        logger.debug('VOICE_MESSAGE_RECEIVED event received');
-        logger.debug({ message: params.message }, 'Message:');
-      },
-    ],
-    [EventType.WORLD_CONNECTED]: [
-      async (params: WorldPayload) => {
-        logger.debug('WORLD_CONNECTED event received');
-        logger.debug({ world: params.world }, 'World:');
-      },
-    ],
-    [EventType.WORLD_JOINED]: [
-      async (params: WorldPayload) => {
-        logger.debug('WORLD_JOINED event received');
-        logger.debug({ world: params.world }, 'World:');
-      },
-    ],
-  },
-  services: [StarterService],
-  actions: [quickAction],
-  providers: [quickProvider],
-  // dependencies: ['@elizaos/plugin-knowledge'], <--- plugin dependencies go here (if requires another plugin)
 };
 
-export default starterPlugin;
+export default aimoRouterPlugin;
